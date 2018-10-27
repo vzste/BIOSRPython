@@ -1,0 +1,538 @@
+---
+title: "R Python Project 1"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+
+
+
+```{r}
+op <- par()
+options(width=80)
+emptyenv()
+rm(list=ls())
+
+### MAPPING PACKAGES ###
+#install.packages(c("RColorBrewer", "sp", "maptools", "lattice", "latticeExtra", "rgdal"))
+library(RColorBrewer)
+library(sp)
+library(maptools) 
+library(lattice)
+library(latticeExtra) # For layer()
+library(rgdal)
+
+library(readr)
+mal <- read_csv("~/Desktop/R Python/R-Python HW 4/MozSyntheticMalaria.csv")
+
+# cases per 1000
+mal$u5.pop <- mal$u5weight*mal$Population_UN
+mal$cases1000 <- (mal$malaria*1000)/mal$u5.pop
+
+mal$admin_1[mal$Province=="CABO DELGADO"] <- "Cabo Delgado"
+mal$admin_1[mal$Province=="NIASSA"] <- "Nassa"
+mal$admin_1[mal$Province=="NAMPULA"] <- "Nampula"
+mal$admin_1[mal$Province=="ZAMBEZIA"] <- "Zambezia"
+mal$admin_1[mal$Province=="TETE"] <- "Tete"
+mal$admin_1[mal$Province=="MANICA"] <- "Manica"
+mal$admin_1[mal$Province=="SOFALA"] <- "Sofala"
+mal$admin_1[mal$Province=="INHAMBANE"] <- "Inhambane"
+mal$admin_1[mal$Province=="GAZA"] <- "Gaza"
+mal$admin_1[mal$Province=="MAPUTO"] <- "Maputo"
+mal$admin_1[mal$Province=="MAPUTO CIDADE"] <- "Maputo"
+
+# table(mal$admin_1)
+
+```
+
+Exploring data
+
+```{r}
+library(Hmisc)
+mal[mal==""] <- NA
+describe(mal)
+
+qplot(mal$cases1000, xlab="Under 5 malaria cases per 1000", ylab="Frequency")
+# no missing data
+
+# Some possible outliers
+# Which districts had cases per 1000 that were over 60?
+mal60 <- subset.data.frame(mal, mal$cases1000>60)
+table(mal60$District)
+table(mal60$Epiyear[mal60$District=="MELUCO"]) 
+# It looks like the district of Meluco in Cabo Delgado has very high under 5 malaria rates in 2015-2016
+# Will look at rainfall and temperature in Meluco later on
+```
+
+Setting up data to examine different lags
+
+```{r}
+# lag variables
+lag.vars <- c("rainTot", "tabove35", "tabove30", "tbelow20", "tbelow15", "pabove1", "pabove50", "pabove100", "rain", "tavg", "rh", "sd", "psfc")
+
+# dataframe with 2 week lags
+library(dplyr)
+lag2wk <- mal %>% group_by(District, Epiyear) %>% mutate_at(vars(lag.vars), funs(lag(., 2L)))
+lag2wk <- dplyr::select(lag2wk, rainTot:psfc, everything())
+names(lag2wk)[1:13] <- c("rainTot.2", "tabove35.2", "tabove30.2", "tbelow20.2", "tbelow15.2", "pabove1.2", "pabove50.2", "pabove100.2", "rain.2", "tavg.2", "rh.2", "sd.2", "psfc.2")
+
+# dataframe with 4 week lags 
+lag4wk <- mal %>% group_by(District, Epiyear) %>% mutate_at(vars(lag.vars), funs(lag(., 4L)))
+lag4wk <- dplyr::select(lag4wk, one_of(lag.vars), everything())
+names(lag4wk)[1:13] <- c("rainTot.4", "tabove35.4", "tabove30.4", "tbelow20.4", "tbelow15.4", "pabove1.4", "pabove50.4", "pabove100.4", "rain.4", "tavg.4", "rh.4", "sd.4", "psfc.4")
+
+# dataframe with 8 week lags 
+lag8wk <- mal %>% group_by(District, Epiyear) %>% mutate_at(vars(lag.vars), funs(lag(., 8L)))
+lag8wk <- dplyr::select(lag8wk, one_of(lag.vars), everything())
+names(lag8wk)[1:13] <- c("rainTot.8", "tabove35.8", "tabove30.8", "tbelow20.8", "tbelow15.8", "pabove1.8", "pabove50.8", "pabove100.8", "rain.8", "tavg.8", "rh.8", "sd.8", "psfc.8")
+
+# merge lag vars
+lag.24 <- merge(lag2wk, lag4wk, by=intersect(names(lag2wk), names(lag4wk)))
+lag.ov <- merge(lag8wk, lag.24, by=intersect(names(lag8wk), names(lag.24)))
+```
+
+Basic relationship between lagged independent variables and malaria incidence
+
+```{r, cache=TRUE}
+library(ggplot2)
+library(splines)
+
+# total rainfall by lag
+lp1 <- ggplot(data = lag.ov) + 
+  geom_smooth(mapping = aes(x = rainTot.2, y = cases1000, color="2 week lag")) +
+  geom_smooth(mapping = aes(x = rainTot.4, y = cases1000, color="4 week lag")) +
+  geom_smooth(mapping = aes(x = rainTot.8, y = cases1000, color="8 week lag")) +
+  xlab("Lagged total rainfall (mm)") +
+  ylab("Malaria cases per 1000") +
+  theme(plot.title=element_text(size=10), text = element_text(size=9))
+# the 4 week lagged total rainfall looks to be the most strongly associated with malaria cases 
+
+# tavg by lag
+lp2 <- ggplot(data = lag.ov) + 
+  geom_smooth(mapping = aes(x = tavg.2, y = cases1000, color="2 week lag")) +
+  geom_smooth(mapping = aes(x = tavg.4, y = cases1000, color="4 week lag")) +
+  geom_smooth(mapping = aes(x = tavg.8, y = cases1000, color="8 week lag")) +
+  xlab("Lagged average temperature (C)") +
+  ylab("Malaria cases per 1000") +
+  theme(plot.title=element_text(size=10), text = element_text(size=9))
+# relationship looks quadratic or cubic 
+# no strong distinction between lags
+
+# rh by lag
+lp3 <- ggplot(data = lag.ov) + 
+  geom_smooth(mapping = aes(x = rh.2, y = cases1000, color="2 week lag")) +
+  geom_smooth(mapping = aes(x = rh.4, y = cases1000, color="4 week lag")) +
+  geom_smooth(mapping = aes(x = rh.8, y = cases1000, color="8 week lag")) +
+  xlab("Lagged relative humidity (%)") +
+  ylab("Malaria cases per 1000") +
+  theme(plot.title=element_text(size=10), text = element_text(size=9))
+# nonlinear trend
+# no one lag is more associated with malaria for all humidity points, suggesting that time between a humidity change and exposure depends on the humidity
+
+lp4 <- # sd by lag
+ggplot(data = lag.ov) + 
+  geom_smooth(mapping = aes(x = sd.2, y = cases1000, color="2 week lag")) +
+  geom_smooth(mapping = aes(x = sd.4, y = cases1000, color="4 week lag")) +
+  geom_smooth(mapping = aes(x = sd.8, y = cases1000, color="8 week lag")) +
+  xlab("Lagged saturation vapor pressure deficit (mmHg)") +
+  ylab("Malaria cases per 1000") +
+  theme(plot.title=element_text(size=10), text = element_text(size=9))
+
+# psfc by lag
+ggplot(data = lag.ov) + 
+  geom_smooth(mapping = aes(x = psfc.2, y = cases1000, color="2 week lag")) +
+  geom_smooth(mapping = aes(x = psfc.4, y = cases1000, color="4 week lag")) +
+  geom_smooth(mapping = aes(x = psfc.8, y = cases1000, color="8 week lag")) +
+  xlab("Surface barometric pressure") +
+  ylab("Malaria cases per 1000") +
+  theme(plot.title=element_text(size=10), text = element_text(size=9))
+
+# tiff("lagplots1", width=7, height=5, units="in", res=300)
+# grid.arrange(lp1, lp2, lp3, lp4)
+# dev.off()
+```
+
+Temporal relationship
+
+```{r}
+### total rainfall and malaria incidence across time
+RTLagTime11 <- ggplot(data = lag.ov[lag.ov$Epiyear=="2011",], aes(x=Epiweek)) + 
+  geom_smooth(mapping = aes(y = rainTot.2, color="2 wk lagged rainfall")) +
+  geom_smooth(mapping = aes(y = rainTot.4, color="4 wk lagged rainfall")) +
+  geom_smooth(mapping = aes(y = rainTot.8, color="8 wk lagged rainfall")) +
+  geom_smooth(aes(y = cases1000, colour = "Cases per 1000")) +
+  scale_y_continuous(sec.axis = sec_axis(~.*1, name="Malaria cases per 1000")) +
+  labs(x="week in 2011", y="Lagged total rainfall (mm)", title="Rainfall and malaria over time (2011)") +
+  theme(plot.title=element_text(size=10), text = element_text(size=9))
+
+RTLagTime12 <- ggplot(data = lag.ov[lag.ov$Epiyear=="2012",], aes(x=Epiweek)) + 
+  geom_smooth(mapping = aes(y = rainTot.2, color="2 wk lagged rainfall")) +
+  geom_smooth(mapping = aes(y = rainTot.4, color="4 wk lagged rainfall")) +
+  geom_smooth(mapping = aes(y = rainTot.8, color="8 wk lagged rainfall")) +
+  geom_smooth(aes(y = cases1000, colour = "Cases per 1000")) +
+  scale_y_continuous(sec.axis = sec_axis(~.*1, name="Malaria cases per 1000")) +
+  labs(x="week in 2012", y="Lagged total rainfall (mm)", title="2012") +
+  theme(plot.title=element_text(size=10), text = element_text(size=9))
+
+RTLagTime13 <- ggplot(data = lag.ov[lag.ov$Epiyear=="2013",], aes(x=Epiweek)) + 
+  geom_smooth(mapping = aes(y = rainTot.2, color="2 wk lagged rainfall")) +
+  geom_smooth(mapping = aes(y = rainTot.4, color="4 wk lagged rainfall")) +
+  geom_smooth(mapping = aes(y = rainTot.8, color="8 wk lagged rainfall")) +
+  geom_smooth(aes(y = cases1000, colour = "Cases per 1000")) +
+  scale_y_continuous(sec.axis = sec_axis(~.*1, name="Malaria cases per 1000")) +
+  labs(x="week in 2013", y="Lagged total rainfall (mm)", title="2013") +
+  theme(plot.title=element_text(size=10), text = element_text(size=9))
+
+RTLagTime14 <- ggplot(data = lag.ov[lag.ov$Epiyear=="2014",], aes(x=Epiweek)) + 
+  geom_smooth(mapping = aes(y = rainTot.2, color="2 wk lagged rainfall")) +
+  geom_smooth(mapping = aes(y = rainTot.4, color="4 wk lagged rainfall")) +
+  geom_smooth(mapping = aes(y = rainTot.8, color="8 wk lagged rainfall")) +
+  geom_smooth(aes(y = cases1000, colour = "Cases per 1000")) +
+  scale_y_continuous(sec.axis = sec_axis(~.*1, name="Malaria cases per 1000")) +
+  labs(x="week in 2014", y="Lagged total rainfall (mm)", title="2014") +
+  theme(plot.title=element_text(size=10), text = element_text(size=9))
+
+RTLagTime15 <- ggplot(data = lag.ov[lag.ov$Epiyear=="2015",], aes(x=Epiweek)) + 
+  geom_smooth(mapping = aes(y = rainTot.2, color="2 wk lagged rainfall")) +
+  geom_smooth(mapping = aes(y = rainTot.4, color="4 wk lagged rainfall")) +
+  geom_smooth(mapping = aes(y = rainTot.8, color="8 wk lagged rainfall")) +
+  geom_smooth(aes(y = cases1000, colour = "Cases per 1000")) +
+  scale_y_continuous(sec.axis = sec_axis(~.*1, name="Malaria cases per 1000")) +
+  labs(x="week in 2015", y="Lagged total rainfall (mm)", title="2015") +
+  theme(plot.title=element_text(size=10), text = element_text(size=9))
+
+RTLagTime16 <- ggplot(data = lag.ov[lag.ov$Epiyear=="2016",], aes(x=Epiweek)) + 
+  geom_smooth(mapping = aes(y = rainTot.2, color="2 wk lagged rainfall")) +
+  geom_smooth(mapping = aes(y = rainTot.4, color="4 wk lagged rainfall")) +
+  geom_smooth(mapping = aes(y = rainTot.8, color="8 wk lagged rainfall")) +
+  geom_smooth(aes(y = cases1000, colour = "Cases per 1000")) +
+  scale_y_continuous(sec.axis = sec_axis(~.*1, name="Malaria cases per 1000")) +
+  labs(x="week in 2016", y="Lagged total rainfall (mm)", title="2016") +
+  theme(plot.title=element_text(size=10), text = element_text(size=9))
+
+# library(gridExtra)
+# tiff("RTLagTime", width=10, height=7, units="in", res=300)
+# grid.arrange(RTLagTime11, RTLagTime12, RTLagTime13, RTLagTime14, RTLagTime15, RTLagTime16, ncol=2)
+# dev.off()
+
+# library(gridExtra)
+# tiff("RFLagPlots", width=7, height=5, units="in", res=300)
+# grid.arrange(rf.lag2, rf.lag4, rf.lag8, ncol=2)
+# dev.off()
+
+### temperature and malaria over time
+TempLag11 <- ggplot(data = lag.ov[lag.ov$Epiyear=="2011",], aes(x=Epiweek)) + 
+  geom_smooth(mapping = aes(y = tavg.2, color="2 wk lagged temp.")) +
+  geom_smooth(mapping = aes(y = tavg.4, color="4 wk lagged temp.")) +
+  geom_smooth(mapping = aes(y = tavg.8, color="8 wk lagged temp.")) +
+  geom_smooth(aes(y = cases1000, colour = "Cases per 1000")) +
+  scale_y_continuous(sec.axis = sec_axis(~.*1, name="Malaria cases per 1000")) +
+  labs(x="week in 2011", y="Lagged temp (C)", title="Weekly avg. temperature & malaria over time (2011)") +
+  theme(plot.title=element_text(size=10), text = element_text(size=9))
+
+TempLag12 <- ggplot(data = lag.ov[lag.ov$Epiyear=="2012",], aes(x=Epiweek)) + 
+  geom_smooth(mapping = aes(y = tavg.2, color="2 wk lagged temp.")) +
+  geom_smooth(mapping = aes(y = tavg.4, color="4 wk lagged temp.")) +
+  geom_smooth(mapping = aes(y = tavg.8, color="8 wk lagged temp.")) +
+  geom_smooth(aes(y = cases1000, colour = "Cases per 1000")) +
+  scale_y_continuous(sec.axis = sec_axis(~.*1, name="Malaria cases per 1000")) +
+  labs(x="week in 2012", y="Lagged temp (C)", title="Weekly avg. temperature & malaria over time (2012)") +
+  theme(plot.title=element_text(size=10), text = element_text(size=9))
+  
+TempLag13 <- ggplot(data = lag.ov[lag.ov$Epiyear=="2013",], aes(x=Epiweek)) + 
+  geom_smooth(mapping = aes(y = tavg.2, color="2 wk lagged temp.")) +
+  geom_smooth(mapping = aes(y = tavg.4, color="4 wk lagged temp.")) +
+  geom_smooth(mapping = aes(y = tavg.8, color="8 wk lagged temp.")) +
+  geom_smooth(aes(y = cases1000, colour = "Cases per 1000")) +
+  scale_y_continuous(sec.axis = sec_axis(~.*1, name="Malaria cases per 1000")) +
+  labs(x="week in 2013", y="Lagged temp (C)", title="Weekly avg. temperature & malaria over time (2013)") + theme(plot.title=element_text(size=10), text = element_text(size=9))
+
+TempLag14 <- ggplot(data = lag.ov[lag.ov$Epiyear=="2014",], aes(x=Epiweek)) + 
+  geom_smooth(mapping = aes(y = tavg.2, color="2 wk lagged temp.")) +
+  geom_smooth(mapping = aes(y = tavg.4, color="4 wk lagged temp.")) +
+  geom_smooth(mapping = aes(y = tavg.8, color="8 wk lagged temp.")) +
+  geom_smooth(aes(y = cases1000, colour = "Cases per 1000")) +
+  scale_y_continuous(sec.axis = sec_axis(~.*1, name="Malaria cases per 1000")) +
+  labs(x="week in 2014", y="Lagged temp (C)", title="Weekly avg. temperature & malaria over time (2014)") + theme(plot.title=element_text(size=10), text = element_text(size=9))
+
+TempLag15 <- ggplot(data = lag.ov[lag.ov$Epiyear=="2015",], aes(x=Epiweek)) + 
+  geom_smooth(mapping = aes(y = tavg.2, color="2 wk lagged temp.")) +
+  geom_smooth(mapping = aes(y = tavg.4, color="4 wk lagged temp.")) +
+  geom_smooth(mapping = aes(y = tavg.8, color="8 wk lagged temp.")) +
+  geom_smooth(aes(y = cases1000, colour = "Cases per 1000")) +
+  scale_y_continuous(sec.axis = sec_axis(~.*1, name="Malaria cases per 1000")) +
+  labs(x="week in 2015", y="Lagged temp (C)", title="Weekly avg. temperature & malaria over time (2015)") + theme(plot.title=element_text(size=10), text = element_text(size=9))
+
+TempLag16 <- ggplot(data = lag.ov[lag.ov$Epiyear=="2016",], aes(x=Epiweek)) + 
+  geom_smooth(mapping = aes(y = tavg.2, color="2 wk lagged temp.")) +
+  geom_smooth(mapping = aes(y = tavg.4, color="4 wk lagged temp.")) +
+  geom_smooth(mapping = aes(y = tavg.8, color="8 wk lagged temp.")) +
+  geom_smooth(aes(y = cases1000, colour = "Cases per 1000")) +
+  scale_y_continuous(sec.axis = sec_axis(~.*1, name="Malaria cases per 1000")) +
+  labs(x="week in 2016", y="Lagged temp (C)", title="Weekly avg. temperature & malaria over time (2016)") + theme(plot.title=element_text(size=10), text = element_text(size=9))
+
+
+# library(gridExtra)
+# tiff("TempLagTime", width=10, height=7, units="in", res=300)
+# grid.arrange(TempLag11, TempLag12, TempLag13, TempLag14, TempLag15, TempLag16)
+# dev.off()
+
+### relative humidity and malaria over time
+RHLagTime <- ggplot(data = lag.ov, aes(x=Epiweek)) + 
+  geom_smooth(mapping = aes(y = rh.2, color="2 week lagged RH")) +
+  geom_smooth(mapping = aes(y = rh.4, color="4 week lagged RH")) +
+  geom_smooth(mapping = aes(y = rh.8, color="8 week lagged RH")) +
+  geom_smooth(aes(y = cases1000, colour = "Cases per 1000")) +
+  scale_y_continuous(sec.axis = sec_axis(~.*1, name="Malaria cases per 1000")) +
+  labs(x="week", y="Lagged RH (%)", title="Relative humidity & malaria over time") +
+  theme(plot.title=element_text(size=10), text = element_text(size=9))
+
+# library(gridExtra)
+# tiff("RHLagTime", width=7, height=5, units="in", res=300)
+# grid.arrange(RHLagTime)
+# dev.off()
+
+### sat. vapor pressure deficit and malaria over time
+SDTimeLag <- ggplot(data = lag.ov, aes(x=Epiweek)) + 
+  geom_smooth(mapping = aes(y = sd.2, color="2 week lagged SVPD")) +
+  geom_smooth(mapping = aes(y = sd.4, color="4 week lagged SVPD")) +
+  geom_smooth(mapping = aes(y = sd.8, color="8 week lagged SVPD")) +
+  geom_smooth(aes(y = cases1000, colour = "Cases per 1000")) +
+  scale_y_continuous(sec.axis = sec_axis(~.*1, name="Malaria cases per 1000")) +
+  labs(x="week", y="Lagged SVPD (%) (mmHg)", title="Saturated vapor pressure deficit & malaria over time") + theme(plot.title=element_text(size=10), text = element_text(size=9))
+
+# library(gridExtra)
+# tiff("SDTimeLag", width=7, height=5, units="in", res=300)
+# grid.arrange(SDTimeLag)
+# dev.off()
+
+### malaria, temperature, rainfall
+psfc.lag2 <- ggplot(data = lag.ov, aes(x=Epiweek)) + 
+  geom_smooth(mapping = aes(y = psfc.2/20, color="Scaled PSFC")) +
+  geom_smooth(aes(y = cases1000, colour = "Cases per 1000")) +
+  scale_y_continuous(sec.axis = sec_axis(~.*1, name="Malaria cases per 1000")) +
+  labs(x="week", y="PSFC/20 (hPa)", title="PSFC & malaria over time") +
+  theme(plot.title=element_text(size=10), text = element_text(size=9))
+
+psfc.lag4 <- ggplot(data = lag.ov, aes(x=Epiweek)) + 
+  geom_smooth(mapping = aes(y = psfc.4/20, color="Scaled PSFC")) +
+  geom_smooth(aes(y = cases1000, colour = "Cases per 1000")) +
+  scale_y_continuous(sec.axis = sec_axis(~.*1, name="Malaria cases per 1000")) +
+  labs(x="week", y="PSFC/20 (hPa)", title="PSFC & malaria over time") +
+  theme(plot.title=element_text(size=10), text = element_text(size=9))
+
+psfc.lag8 <- ggplot(data = lag.ov, aes(x=Epiweek)) + 
+  geom_smooth(mapping = aes(y = psfc.8/20, color="Scaled PSFC")) +
+  geom_smooth(aes(y = cases1000, colour = "Cases per 1000")) +
+  scale_y_continuous(sec.axis = sec_axis(~.*1, name="Malaria cases per 1000")) +
+  labs(x="week", y="PSFC/20 (hPa)", title="PSFC & malaria over time") +
+  theme(plot.title=element_text(size=10), text = element_text(size=9))
+
+```
+
+Spatial relationship
+
+```{r, message=F, warning=F}
+library(RColorBrewer)
+library(sp)
+library(maptools) 
+library(lattice)
+library(latticeExtra)
+library(rgdal)
+
+cpt <- as.data.frame(tapply(mal$cases1000, list(mal$admin_1, mal$Epiyear), mean))
+names(cpt) <- c(paste0("year", 2010:2016))
+rainTot <- as.data.frame(tapply(mal$rainTot, list(mal$admin_1, mal$Epiyear), sum))
+names(rainTot) <- c(paste0("year", 2010:2016))
+tavg <- as.data.frame(tapply(mal$tavg, list(mal$admin_1, mal$Epiyear), mean))
+names(tavg) <- c(paste0("year", 2010:2016))
+rh <- as.data.frame(tapply(mal$rh, list(mal$admin_1, mal$Epiyear), mean))
+names(rh) <- c(paste0("year", 2010:2016))
+svpd <- as.data.frame(tapply(mal$sd, list(mal$admin_1, mal$Epiyear), mean))
+names(svpd) <- c(paste0("year", 2010:2016))
+
+# read in the Moz shape file for districts
+poly3 <- readShapePoly('/Users/stellaveazey/Desktop/rpythonhw4/mozambique_admin1.shp', IDvar="admin_1")
+
+# create spatial dataframes for cases per 1000, total rainfall, average temp
+polydat.cpt <- SpatialPolygonsDataFrame(poly3, cpt)
+polydat.rt <-  SpatialPolygonsDataFrame(poly3, rainTot)
+polydat.tavg <-  SpatialPolygonsDataFrame(poly3, tavg)
+polydat.rh <- SpatialPolygonsDataFrame(poly3, rh)
+polydat.svpd <- SpatialPolygonsDataFrame(poly3, svpd)
+
+# Color palettes
+tempPal <- brewer.pal(n = 7, name = "YlOrRd")
+rainPal <- brewer.pal(n = 7, name = "YlGnBu")
+rhPal <- brewer.pal(n = 6, name = "Purples")
+sdPal <- brewer.pal(n = 6, name = "Greens")
+my.palette <- brewer.pal(n = 7, name = "BuPu")
+
+# cases per thousand by year
+library(classInt)
+cpt.all <- c(cpt$year2011, cpt$year2012, cpt$year2013, cpt$year2014, cpt$year2015, cpt$year2016)
+breaks.qt <- classIntervals(cpt$year2016, n = 6, style = "equal", intervalClosure = "right")
+p1 <- spplot(polydat.cpt, c("year2011", "year2012", "year2013", "year2014", "year2015", "year2016"),  names.attr=c("2011", "2012", "2013", "2014", "2015", "2016"), colorkey=list(space="right"), scales = list(draw = TRUE), 
+       main=list(label="Avg malaria cases/1000 by year", ps=4, cex=0.75),
+       as.table = TRUE, col.regions = my.palette, col="transparent", at=breaks.qt$brks)
+
+
+# Rainfall by year
+rt.all <- c(rainTot$year2011, rainTot$year2012, rainTot$year2013, rainTot$year2014, rainTot$year2015, rainTot$year2016)
+breaks.qt <- classIntervals(rt.all, n = 6, style = "equal", intervalClosure = "right")
+p2 <- spplot(polydat.rt, c("year2011", "year2012", "year2013", "year2014", "year2015", "year2016"),  names.attr=c("2011", "2012", "2013", "2014", "2015", "2016"), colorkey=list(space="right"), scales = list(draw = TRUE), 
+       main=list(label="Total rainfall by year", ps=4, cex=.75),
+       as.table = TRUE, col.regions = rainPal, col="transparent", at=breaks.qt$brks)
+
+# Avg temp by year
+tavg.all <- c(tavg$year2011, tavg$year2012, tavg$year2013, tavg$year2014, tavg$year2015, tavg$year2016)
+breaks.qt <- classIntervals(tavg.all, n = 6, style = "equal", intervalClosure = "right")
+p3 <- spplot(polydat.tavg, c("year2011", "year2012", "year2013", "year2014", "year2015", "year2016"),  names.attr=c("2011", "2012", "2013", "2014", "2015", "2016"), colorkey=list(space="right"), scales = list(draw = TRUE), 
+       main=list(label="Temperature by year", ps=4, cex=.75),
+       as.table = TRUE, col.regions = tempPal, col="transparent", at=breaks.qt$brks)
+
+# relative humidity by year
+rh.all <- c(rh$year2011, rh$year2012, rh$year2013, rh$year2014, rh$year2015, rh$year2016)
+breaks.qt <- classIntervals(rh.all, n = 6, style = "equal", intervalClosure = "right")
+p4 <- spplot(polydat.rh, c("year2011", "year2012", "year2013", "year2014", "year2015", "year2016"),  names.attr=c("2011", "2012", "2013", "2014", "2015", "2016"), colorkey=list(space="right"), scales = list(draw = TRUE), 
+       main=list(label="Relative humidity by year", ps=4, cex=.75),
+       as.table = TRUE, col.regions = rhPal, col="transparent", at=breaks.qt$brks)
+
+# SVPD humidity by year
+svpd.all <- c(svpd$year2011, svpd$year2012, svpd$year2013, svpd$year2014, svpd$year2015, svpd$year2016)
+breaks.qt <- classIntervals(svpd.all, n = 6, style = "equal", intervalClosure = "right")
+p5 <- spplot(polydat.svpd, c("year2011", "year2012", "year2013", "year2014", "year2015", "year2016"),  names.attr=c("2011", "2012", "2013", "2014", "2015", "2016"), colorkey=list(space="right"), scales = list(draw = TRUE), 
+       main=list(label="SVPD by year", ps=4, cex=.75),
+       as.table = TRUE, col.regions = sdPal, col="transparent", at=breaks.qt$brks)
+
+# tiff("spatial1", width = 11, height = 11, units = "in", res=300)
+# grid.arrange(p1, p2, p3, p4, p5)
+# dev.off()
+```
+
+Association between temperature and rainfall
+
+```{r}
+# tiff("raintemp", width = 7, height = 5, units = "in", res=300)
+# ggplot(data = lag.ov, aes(x=tavg.2)) + 
+#   geom_smooth(mapping = aes(y = rainTot.2)) +
+#   scale_y_continuous(sec.axis = sec_axis(~.*1, name="Malaria cases per 1000")) +
+#   labs(x="Avg. temperature (C)", y="Lagged total rainfall (mm)", title="Temp., Rainfall & Malaria") +
+#   theme(plot.title=element_text(size=10), text = element_text(size=9))
+# dev.off()
+```
+
+Is the rainy season changing? (~October-March)
+
+```{r}
+### average rainfall by province, year and week
+rainy <- mal %>% group_by(Province, Epiyear, Epiweek) %>% summarise(mean=mean(rainTot)) 
+out1 <- split(rainy , f = rainy$Epiyear)
+
+### average rainfall by year and week (whole country)
+library(dplyr)
+rainy2 <- mal %>% group_by(Epiyear, Epiweek) %>% summarise(mean=mean(rainTot)) 
+out <- split(rainy2 , f = rainy2$Epiyear)
+
+yr11 <- ggplot(data = out$`2011`, aes(x=Epiweek)) + 
+  geom_smooth(mapping = aes(y = mean)) +
+  labs(x="Week in 2011", y="Rainfall (mm)", title="Average weekly total rainfall in 2011") +
+  theme(plot.title=element_text(size=10), text = element_text(size=9)) +
+  geom_vline(xintercept = 10) +
+  geom_vline(xintercept = 40) +
+  geom_text(aes(x=10, label="March 1", y=25), angle=90, vjust = -1.1, text=element_text(size=9)) +
+  geom_text(aes(x=40, label="October 1", y=25), angle=-90, vjust = -1.1, text=element_text(size=9)) +
+  ylim(0,50)
+
+yr12 <- ggplot(data = out$`2012`, aes(x=Epiweek)) + 
+  geom_smooth(mapping = aes(y = mean)) +
+  labs(x="Week in 2012", y="Avg. rainfall (mm)", title="Average weekly total rainfall in 2012") +
+  theme(plot.title=element_text(size=10), text = element_text(size=9)) +
+  geom_vline(xintercept = 9) +
+  geom_vline(xintercept = 40) +
+  geom_text(aes(x=9, label="March 1", y=25), angle=90, vjust = -1.1, text=element_text(size=9)) +
+  geom_text(aes(x=40, label="October 1", y=25), angle=-90, vjust = -1.1, text=element_text(size=9)) +
+  ylim(0,50)
+
+yr13 <- ggplot(data = out$`2013`, aes(x=Epiweek)) + 
+  geom_smooth(mapping = aes(y = mean)) +
+  labs(x="Week in 2013", y="Avg. rainfall (mm)", title="Average weekly total rainfall in 2013") +
+  theme(plot.title=element_text(size=10), text = element_text(size=9)) +
+  geom_vline(xintercept = 9) +
+  geom_vline(xintercept = 40) +
+  geom_text(aes(x=9, label="March 1", y=35), angle=90, vjust = -1.1, text=element_text(size=9)) +
+  geom_text(aes(x=40, label="October 1", y=35), angle=-90, vjust = -1.1, text=element_text(size=9)) +
+  ylim(0,50)
+
+yr14 <- ggplot(data = out$`2014`, aes(x=Epiweek)) + 
+  geom_smooth(mapping = aes(y = mean)) +
+  labs(x="Week in 2014", y="Avg. rainfall (mm)", title="Average weekly total rainfall in 2014") +
+  theme(plot.title=element_text(size=10), text = element_text(size=9)) +
+  geom_vline(xintercept = 9) +
+  geom_vline(xintercept = 40) +
+  geom_text(aes(x=9, label="March 1", y=30), angle=90, vjust = -1.1, text=element_text(size=9)) +
+  geom_text(aes(x=40, label="October 1", y=30), angle=-90, vjust = -1.1, text=element_text(size=9)) +
+  ylim(0,50)
+
+yr15 <- ggplot(data = out$`2015`, aes(x=Epiweek)) + 
+  geom_smooth(mapping = aes(y = mean)) +
+  labs(x="Week in 2015", y="Avg. rainfall (mm)", title="Average weekly total rainfall in 2015") +
+  theme(plot.title=element_text(size=10), text = element_text(size=9)) +
+  geom_vline(xintercept = 10) +
+  geom_vline(xintercept = 40) +
+  geom_text(aes(x=10, label="March 1", y=30), angle=90, vjust = -1.1, text=element_text(size=9)) +
+  geom_text(aes(x=40, label="October 1", y=30), angle=-90, vjust = -1.1, text=element_text(size=9)) +
+  ylim(0,50)
+
+yr16 <- ggplot(data = out$`2016`, aes(x=Epiweek)) + 
+  geom_smooth(mapping = aes(y = mean)) +
+  labs(x="Week in 2016", y="Avg. rainfall (mm)", title="Average weekly total rainfall in 2016") +
+  theme(plot.title=element_text(size=10), text = element_text(size=9)) +
+  geom_vline(xintercept = 10) +
+  geom_vline(xintercept = 40) +
+  geom_text(aes(x=10, label="March 1", y=35), angle=90, vjust = -1.1, text=element_text(size=9)) +
+  geom_text(aes(x=40, label="October 1", y=35), angle=-90, vjust = -1.1, text=element_text(size=9)) +
+  ylim(0,50)
+
+# tiff("rainy", width = 8, height = 9, units = "in", res=300)
+# grid.arrange(yr11, yr12, yr13, yr14, yr15, yr16, ncol=2)
+# dev.off()
+```
+
+
+Exploring high cases in Meluco in 2015 & 2016
+
+```{r}
+# 2016
+summary(mal$rainTot[mal$Epiyear==2016])
+qplot(x=mal$Epiweek[mal$Epiyear==2016], y=mal$rainTot[mal$Epiyear==2016], xlab="week", ylab="2016 Rainfall")
+# subset high cases
+z <- subset.data.frame(mal, mal$rainTot>=600)
+
+table(z$Province)
+table(z$District)
+# appears to be happening in Meluco in Provice Cabo Delgado
+
+# possible outlier
+summary(mal$rainTot[mal$District=="INHARRIME" & mal$Epiyear==2016])
+qplot(x=mal$Epiweek[mal$District=="INHARRIME" & mal$Epiyear==2016], y=mal$rainTot[mal$District=="INHARRIME" & mal$Epiyear==2016], xlab="week in 2016", ylab="Rainfall (mm) in Inharrime")
+
+### Rainfall
+# summary rainfall in 2016 for Meluco
+summary(mal$rainTot[mal$District=="MELUCO" & mal$Epiyear==2016])
+# summary rainfall in 2016 for rest of Cabo Delgado
+summary(mal$rainTot[mal$District!="MELUCO" & mal$Province == "CABO DELGADO" & mal$Epiyear==2016])
+# summary rainfall in 2016 for rest of Mozambique
+summary(mal$rainTot[mal$District!="MELUCO" & mal$Epiyear==2016])
+qplot(x=mal$Epiweek[mal$District=="MELUCO" & mal$Epiyear==2016], y=mal$rainTot[mal$District=="MELUCO" & mal$Epiyear==2016], xlab="week in 2016", ylab="Weekly rain total (mm)", main="2016 Rainfall in Meluco")
+# nothing looks unusal about rainfall for Meluco here
+
+# Temperature
+# summary temperature in 2016 for Meluco
+summary(mal$tavg[mal$District=="MELUCO" & mal$Epiyear==2016])
+# summary rainfall in 2016 for rest of Mozambique
+summary(mal$tavg[mal$District!="MELUCO" & mal$Epiyear==2016])
+```
